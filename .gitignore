@@ -1,0 +1,9 @@
+# folders to ignore
+examples/
+
+
+# files to ignore
+*.gpx
+*.kml
+
+.DS_Store
