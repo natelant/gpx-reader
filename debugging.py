@@ -66,7 +66,7 @@ def parse_gpx(file, key_intersections):
                 travel_times.append({
                     'origin_index': previous_intersection['Intersection'],
                     'route_id': str(previous_intersection['Intersection']) + '-' + str(closest_intersection['Intersection']),
-                    'direction': 'positive' if (previous_intersection['Intersection'] - closest_intersection['Intersection']) > 0 else 'negative',
+                    'direction': '2' if (previous_intersection['Intersection'] - closest_intersection['Intersection']) > 0 else '1',
                     'start_intersection': previous_intersection['Name'],
                     'end_intersection': closest_intersection['Name'],
                     'start_time': previous_intersection_time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -252,19 +252,20 @@ def process_travel_times(travel_times_df):
 
 
 uploaded_kml = 'sample_data/State Street (9000 South to 11400 South).kml'
-uploaded_gpx_files = ['sample_data/02-Jul-2024-1804PM State Street.gpx']
+uploaded_gpx_files = ['sample_data/02-Jul-2024-1804PM State Street.gpx', 'sample_data/09-Jul-2024 State St. AM Observations.gpx', 'sample_data/02-Jul-2024-1352 MD obsevations lower state st.gpx']
 # Process KML file
 key_intersections = parse_kml(uploaded_kml)
 
 # Process GPX files and calculate travel times
 all_gpx_data = []
+all_travel_times_df = []
 for gpx_file in uploaded_gpx_files:
     df, travel_times_df = parse_gpx(gpx_file, key_intersections)
     all_gpx_data.append(df)
-
+    all_travel_times_df.append(travel_times_df)
 gpx_data = pd.concat(all_gpx_data, ignore_index=True)
 
-formatted_travel_times_df = process_travel_times(travel_times_df)
+formatted_travel_times_df = process_travel_times(all_travel_times_df)
 
 print(formatted_travel_times_df)
 

@@ -24,9 +24,24 @@ st.set_page_config(
     page_icon=':car:',
 )
 
-# Add title and description
-st.title('GPX Route Analysis Tool')
-st.write('Upload GPX files and a KML file to analyze travel times and visualize routes.')
+# Add title and logo
+st.markdown(
+    """
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <img src="https://avenueconsultants.com/wp-content/themes/avenuecustom/webflow/images/a-blue.png" 
+             style="width: 100px; margin-left: 20px;">
+        <div>
+            <h1>GPX Route Analysis Tool</h1>
+            <p>Upload GPX files and a KML file to analyze travel times and visualize routes.</p>
+        </div>
+        
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+# Add some vertical space
+st.markdown("<br>", unsafe_allow_html=True)
 
 # File upload section
 st.header('File Upload')
@@ -96,7 +111,7 @@ def parse_gpx(file, key_intersections):
                 travel_times.append({
                     'origin_index': previous_intersection['Intersection'],
                     'route_id': str(previous_intersection['Intersection']) + '-' + str(closest_intersection['Intersection']),
-                    'direction': '1' if (previous_intersection['Intersection'] - closest_intersection['Intersection']) > 0 else '2',
+                    'direction': '2' if (previous_intersection['Intersection'] - closest_intersection['Intersection']) > 0 else '1',
                     'start_intersection': previous_intersection['Name'],
                     'end_intersection': closest_intersection['Name'],
                     'start_time': previous_intersection_time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -214,10 +229,18 @@ def make_time_plot(data, intersection_coords, direction):
 
     return fig  # Return the figure instead of showing it
 
-def plot_data_on_map(df):
+def plot_data_on_map(df, min_speed, max_speed, start_time, end_time):
     m = folium.Map(tiles="cartodb positron", 
                   location=[df['Latitude'].mean(), df['Longitude'].mean()], 
                   zoom_start=12)
+    
+    # Filter data based on speed range and time range
+    df_filtered = df[
+        (df['Speed'] >= min_speed) & 
+        (df['Speed'] <= max_speed) &
+        (df['TimeOfDay'] >= start_time) &
+        (df['TimeOfDay'] <= end_time)
+    ]
     
     colors = {
         'Below 3 mph': 'red',
@@ -226,7 +249,7 @@ def plot_data_on_map(df):
         'Above 30 mph': 'green'
     }
 
-    for _, row in df.iterrows():
+    for _, row in df_filtered.iterrows():
         folium.CircleMarker(
             location=[row['Latitude'], row['Longitude']],
             radius=5,
@@ -237,7 +260,7 @@ def plot_data_on_map(df):
             popup=f"Time: {row['TimeOfDay']}<br>Speed: {row['Speed']} mph<br>Lat: {row['Latitude']}<br>Lon: {row['Longitude']}"
         ).add_to(m)
     
-    return m  # Return the map object instead of saving it
+    return m
 
 def process_travel_times(travel_times_df):
     # Format into table
@@ -292,11 +315,13 @@ if uploaded_gpx_files and uploaded_kml:
 
         # Process GPX files and calculate travel times
         all_gpx_data = []
+        all_travel_times_df = []
         for gpx_file in uploaded_gpx_files:
             df, travel_times_df = parse_gpx(gpx_file, key_intersections)
             all_gpx_data.append(df)
-        
+            all_travel_times_df.append(travel_times_df)
         gpx_data = pd.concat(all_gpx_data, ignore_index=True)
+        travel_times_df = pd.concat(all_travel_times_df, ignore_index=True)
         
         # Map intersections
         gpx_data, intersection_coords = map_to_intersections(gpx_data, key_intersections, direction)
@@ -316,9 +341,41 @@ if uploaded_gpx_files and uploaded_kml:
         st.plotly_chart(fig, use_container_width=True)
         
         # Display map
+        # Add filter sliders before the map
         st.subheader('Route Map')
-        m = plot_data_on_map(gpx_data)
-        st.components.v1.html(m._repr_html_(), height=800)  # Set both height
+        
+        # Speed filter
+        min_speed = float(gpx_data['Speed'].min())
+        max_speed = float(gpx_data['Speed'].max())
+        speed_range = st.slider(
+            'Filter by Speed (mph)',
+            min_value=min_speed,
+            max_value=max_speed,
+            value=(min_speed, max_speed),
+            step=1.0
+        )
+        
+        # Time filter - convert to datetime.time objects for better handling
+        time_values = pd.to_datetime(gpx_data['TimeOfDay']).dt.time.unique()
+        time_values = sorted(time_values)
+        time_range = st.select_slider(
+            'Filter by Time of Day',
+            options=time_values,
+            value=(time_values[0], time_values[-1]),
+            format_func=lambda x: x.strftime('%H:%M:%S')
+        )
+        
+        # Convert selected times to strings for comparison
+        start_time_str = time_range[0].strftime('%H:%M:%S')
+        end_time_str = time_range[1].strftime('%H:%M:%S')
+        
+        # Update map with filtered data
+        m = plot_data_on_map(gpx_data, 
+                           speed_range[0], 
+                           speed_range[1],
+                           start_time_str,
+                           end_time_str)
+        st.components.v1.html(m._repr_html_(), height=800)
 
         
         
