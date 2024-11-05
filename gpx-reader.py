@@ -30,14 +30,29 @@ st.write('Upload GPX files and a KML file to analyze travel times and visualize 
 
 # File upload section
 st.header('File Upload')
+st.write('The GPX files should come from a GPX app that has a time and location at each point.')
+st.write(
+    '''
+    The KML file should consist of points (in order) that represent the intersections on the route.
+    If travel times at the end points are important for the analysis, consider adding a point at the start and end of the route.
+    '''
+)
 uploaded_gpx_files = st.file_uploader('Upload GPX files', type=['gpx'], accept_multiple_files=True)
 uploaded_kml = st.file_uploader('Upload KML file', type=['kml'])
 
 # Direction selector
 direction = st.radio('Select Direction:', ['NS', 'EW'])
 
+
+# Function to calculate travel time between two timestamps
+def calculate_travel_time(start_time, end_time):
+    start_datetime = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%S')
+    end_datetime = datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%S')
+    return (end_datetime - start_datetime).total_seconds()
+
+
 # Function to parse GPX file and calculate speed
-def parse_gpx(file):
+def parse_gpx(file, key_intersections):
     tree = ET.parse(file)
     root = tree.getroot()
 
@@ -48,6 +63,10 @@ def parse_gpx(file):
     data = []
     previous_point = None
     previous_time = None
+    previous_intersection = None
+    previous_intersection_time = None
+    travel_times = []
+    distance_threshold = 0.009  # approximately 50 feet in miles
     
     for trkpt in root.findall('.//gpx:trkpt', namespaces):
         timestamp = trkpt.find('gpx:time', namespaces).text
@@ -61,6 +80,35 @@ def parse_gpx(file):
         
         time_of_day_local = time_of_day_utc.replace(tzinfo=pytz.utc).astimezone(LOCAL_TZ)
         
+        # Find closest intersection
+        closest_intersection = None
+        min_distance = float('inf')
+        for _, intersection in key_intersections.iterrows():
+            distance = haversine(lat, lon, intersection['Latitude'], intersection['Longitude'])
+            if distance < min_distance and distance <= distance_threshold:
+                min_distance = distance
+                closest_intersection = intersection
+        
+        # If we found a close intersection and had a previous intersection
+        if closest_intersection is not None and previous_intersection is not None:
+            # Only record if it's a different intersection
+            if closest_intersection['Name'] != previous_intersection['Name']:
+                travel_times.append({
+                    'origin_index': previous_intersection['Intersection'],
+                    'route_id': str(previous_intersection['Intersection']) + '-' + str(closest_intersection['Intersection']),
+                    'direction': '1' if (previous_intersection['Intersection'] - closest_intersection['Intersection']) > 0 else '2',
+                    'start_intersection': previous_intersection['Name'],
+                    'end_intersection': closest_intersection['Name'],
+                    'start_time': previous_intersection_time.strftime('%Y-%m-%dT%H:%M:%S'),
+                    'end_time': time_of_day_local.strftime('%Y-%m-%dT%H:%M:%S'),
+                    'travel_time_seconds': (time_of_day_local - previous_intersection_time).total_seconds()
+                })
+                previous_intersection = closest_intersection
+                previous_intersection_time = time_of_day_local
+        elif closest_intersection is not None:
+            previous_intersection = closest_intersection
+            previous_intersection_time = time_of_day_local
+        
         if previous_point is not None and previous_time is not None:
             distance = haversine(previous_point[0], previous_point[1], lat, lon)
             time_diff = (time_of_day_local - previous_time).total_seconds() / 3600.0
@@ -73,7 +121,8 @@ def parse_gpx(file):
         previous_time = time_of_day_local
     
     df = pd.DataFrame(data, columns=['TimeOfDay', 'Latitude', 'Longitude', 'Speed'])
-
+    travel_times_df = pd.DataFrame(travel_times)
+    
     bins = [-float('inf'), 3, 15, 30, float('inf')]
     labels = ['Below 3 mph', '3-15 mph', '15-30 mph', 'Above 30 mph']
     df['SpeedCategory'] = pd.cut(df['Speed'], bins=bins, labels=labels)
@@ -81,7 +130,7 @@ def parse_gpx(file):
     speed_category_order = ['Below 3 mph', '3-15 mph', '15-30 mph', 'Above 30 mph']
     df['SpeedCategory'] = pd.Categorical(df['SpeedCategory'], categories=speed_category_order, ordered=True)
 
-    return df
+    return df, travel_times_df
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0*0.621371  # Earth radius in miles
@@ -190,6 +239,46 @@ def plot_data_on_map(df):
     
     return m  # Return the map object instead of saving it
 
+def process_travel_times(travel_times_df):
+    # Format into table
+    # Step 1: Filter out rows where start_intersection equals end_intersection
+    filtered_df = travel_times_df[travel_times_df['start_intersection'] != travel_times_df['end_intersection']]
+    filtered_df.loc[:,'route'] = filtered_df['start_intersection'] + '_to_' + filtered_df['end_intersection']
+    # Add a new column indicating the order of occurrence for each combination
+    filtered_df['run_number'] = filtered_df.groupby('route').cumcount() + 1
+
+    # Convert 'start_time' to datetime and remove timezone information
+    filtered_df['start_time'] = pd.to_datetime(filtered_df['start_time']).dt.tz_localize(None)
+
+    # Get the earliest and latest hours
+    earliest_hour = filtered_df['start_time'].min().floor('h')
+    latest_hour = filtered_df['start_time'].max().ceil('h')
+
+    # Create 15-minute bins
+    time_bins = pd.date_range(start=earliest_hour, end=latest_hour, freq='15min')
+
+    # Create unique labels for the bins (as strings)
+    time_labels = time_bins[:-1].strftime('%Y-%m-%d %H:%M')
+
+    # Assign each row to a time bin
+    filtered_df['time_bin'] = pd.cut(filtered_df['start_time'], bins=time_bins, labels=time_labels, include_lowest=True)
+
+    # Pivot the table based on the new column 'time_bin'
+    pivoted_df = filtered_df.pivot_table(
+        index=['direction', 'origin_index',  'route'], 
+        columns='time_bin', 
+        values='travel_time_seconds',
+        aggfunc='first'
+    )
+
+    # Calculate the average travel time across time bins
+    pivoted_df['average'] = pivoted_df.mean(axis=1)
+
+    # Calculate the standard deviation of travel times across time bins
+    pivoted_df['std_deviation'] = pivoted_df.std(axis=1)
+
+    # Output the total table of all calculated travel times
+    return pivoted_df
 # -----------------------------------------------------------------------------------------
 # Main app logic --------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------
@@ -197,23 +286,28 @@ def plot_data_on_map(df):
 if uploaded_gpx_files and uploaded_kml:
     st.header('Analysis Results')
     
-    try:
-        # Process GPX files
+    try:    
+        # Process KML file
+        key_intersections = parse_kml(uploaded_kml)
+
+        # Process GPX files and calculate travel times
         all_gpx_data = []
         for gpx_file in uploaded_gpx_files:
-            df = parse_gpx(gpx_file)
+            df, travel_times_df = parse_gpx(gpx_file, key_intersections)
             all_gpx_data.append(df)
         
         gpx_data = pd.concat(all_gpx_data, ignore_index=True)
-        
-        # Process KML file
-        key_intersections = parse_kml(uploaded_kml)
         
         # Map intersections
         gpx_data, intersection_coords = map_to_intersections(gpx_data, key_intersections, direction)
         
         # Sort data
         gpx_data = gpx_data.sort_values(by='TimeOfDay')
+
+        # Display travel times
+        st.subheader('Travel Times')
+        formatted_travel_times_df = process_travel_times(travel_times_df)
+        st.dataframe(formatted_travel_times_df)
         
         # Display time plot
         st.subheader('Route Over Time Plot')
@@ -225,9 +319,11 @@ if uploaded_gpx_files and uploaded_kml:
         st.subheader('Route Map')
         m = plot_data_on_map(gpx_data)
         st.components.v1.html(m._repr_html_(), height=800)  # Set both height
+
+        
         
         # Optional: Display data table
-        if st.checkbox('Show Raw Data'):
+        if st.checkbox('Show Raw GPX Data'):
             st.dataframe(gpx_data)
             
     except Exception as e:

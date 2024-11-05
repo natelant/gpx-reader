@@ -1,5 +1,6 @@
 # folders to ignore
 examples/
+sample_data/
 
 
 # files to ignore
