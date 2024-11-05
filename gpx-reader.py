@@ -157,7 +157,10 @@ def make_time_plot(data, intersection_coords, direction):
     )
 
     fig.update_layout(
-        title=f'Key Intersections vs Time of Day with Speed Gradient ({direction} Direction)'
+        title=f'Key Intersections vs Time of Day with Speed Gradient ({direction} Direction)',
+        width=1000,
+        height=800,
+        autosize=True
     )
 
     return fig  # Return the figure instead of showing it
@@ -213,14 +216,15 @@ if uploaded_gpx_files and uploaded_kml:
         gpx_data = gpx_data.sort_values(by='TimeOfDay')
         
         # Display time plot
-        st.subheader('Time vs. Location Plot')
+        st.subheader('Route Over Time Plot')
         fig = make_time_plot(gpx_data, intersection_coords, direction)
+        fig.update_layout(width=1200, height=800)  # Set both height and width
         st.plotly_chart(fig, use_container_width=True)
         
         # Display map
         st.subheader('Route Map')
         m = plot_data_on_map(gpx_data)
-        st.components.v1.html(m._repr_html_(), height=600)
+        st.components.v1.html(m._repr_html_(), height=800)  # Set both height
         
         # Optional: Display data table
         if st.checkbox('Show Raw Data'):
