@@ -264,43 +264,33 @@ def plot_data_on_map(df, min_speed, max_speed, start_time, end_time):
 
 def process_travel_times(travel_times_df):
     # Format into table
-    # Step 1: Filter out rows where start_intersection equals end_intersection
     filtered_df = travel_times_df[travel_times_df['start_intersection'] != travel_times_df['end_intersection']]
     filtered_df.loc[:,'route'] = filtered_df['start_intersection'] + '_to_' + filtered_df['end_intersection']
-    # Add a new column indicating the order of occurrence for each combination
     filtered_df['run_number'] = filtered_df.groupby('route').cumcount() + 1
 
-    # Convert 'start_time' to datetime and remove timezone information
-    filtered_df['start_time'] = pd.to_datetime(filtered_df['start_time']).dt.tz_localize(None)
+    # Convert 'start_time' to datetime and extract just the time component
+    filtered_df['start_time'] = pd.to_datetime(filtered_df['start_time'])
+    filtered_df['time_of_day'] = filtered_df['start_time'].dt.strftime('%H:%M')
+    
+    # Round to nearest 15 minutes
+    filtered_df['time_bin'] = pd.to_datetime(filtered_df['start_time']).dt.round('15min').dt.strftime('%H:%M')
 
-    # Get the earliest and latest hours
-    earliest_hour = filtered_df['start_time'].min().floor('h')
-    latest_hour = filtered_df['start_time'].max().ceil('h')
-
-    # Create 15-minute bins
-    time_bins = pd.date_range(start=earliest_hour, end=latest_hour, freq='15min')
-
-    # Create unique labels for the bins (as strings)
-    time_labels = time_bins[:-1].strftime('%Y-%m-%d %H:%M')
-
-    # Assign each row to a time bin
-    filtered_df['time_bin'] = pd.cut(filtered_df['start_time'], bins=time_bins, labels=time_labels, include_lowest=True)
-
-    # Pivot the table based on the new column 'time_bin'
+    # Pivot the table based on the time_bin column
     pivoted_df = filtered_df.pivot_table(
-        index=['direction', 'origin_index',  'route'], 
+        index=['direction', 'origin_index', 'route'], 
         columns='time_bin', 
         values='travel_time_seconds',
-        aggfunc='first'
+        aggfunc='mean'  # Changed to mean to handle multiple values in same time bin
     )
 
-    # Calculate the average travel time across time bins
-    pivoted_df['average'] = pivoted_df.mean(axis=1)
+    # Sort the columns chronologically
+    time_columns = sorted(pivoted_df.columns)
+    pivoted_df = pivoted_df[time_columns]
 
-    # Calculate the standard deviation of travel times across time bins
+    # Calculate the average and std_deviation
+    pivoted_df['average'] = pivoted_df.mean(axis=1)
     pivoted_df['std_deviation'] = pivoted_df.std(axis=1)
 
-    # Output the total table of all calculated travel times
     return pivoted_df
 # -----------------------------------------------------------------------------------------
 # Main app logic --------------------------------------------------------------------------
