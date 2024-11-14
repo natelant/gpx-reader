@@ -67,7 +67,8 @@ def calculate_travel_time(start_time, end_time):
 
 
 # Function to parse GPX file and calculate speed
-def parse_gpx(file, key_intersections):
+@st.cache_data
+def parse_gpx(file, _key_intersections):
     tree = ET.parse(file)
     root = tree.getroot()
 
@@ -98,7 +99,7 @@ def parse_gpx(file, key_intersections):
         # Find closest intersection
         closest_intersection = None
         min_distance = float('inf')
-        for _, intersection in key_intersections.iterrows():
+        for _, intersection in _key_intersections.iterrows():
             distance = haversine(lat, lon, intersection['Latitude'], intersection['Longitude'])
             if distance < min_distance and distance <= distance_threshold:
                 min_distance = distance
@@ -159,6 +160,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
+@st.cache_data
 def parse_kml(file):
     gdf = gpd.read_file(file, driver='KML')
     key_intersections = gdf[['geometry', 'Name']].copy()
@@ -300,10 +302,10 @@ if uploaded_gpx_files and uploaded_kml:
     st.header('Analysis Results')
     
     try:    
-        # Process KML file
+        # Process KML file with caching
         key_intersections = parse_kml(uploaded_kml)
 
-        # Process GPX files and calculate travel times
+        # Process GPX files and calculate travel times with caching
         all_gpx_data = []
         all_travel_times_df = []
         for gpx_file in uploaded_gpx_files:
