@@ -207,7 +207,7 @@ def make_time_plot(data, intersection_coords, direction):
             colorbar=dict(title='Speed Scale'),
             size=10
         ),
-        text=data['Name'],
+        text=data.apply(lambda row: f"Time: {row['TimeOfDay']}<br>Speed: {row['Speed']:.1f} mph", axis=1),
         hoverinfo='text'
     ))
 
